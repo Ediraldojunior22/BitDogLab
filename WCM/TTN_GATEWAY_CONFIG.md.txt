@@ -1,0 +1,214 @@
+# Configuração do TTN gateway
+
+## Visão Geral
+
+O gateway utilizado é o RAK7289V2 (WisGate Edge), conectado via Ethernet à rede cabeada da UNICAMP.
+O papel dele é receber os pacotes LoRaWAN / LoRa ? enviados pelos dispositivos em campo e encaminhar esses pacotes para a nuvem via The Things Network (TTN), na instância gratuita (The Things Stack - Community Edition, cluster `nam1`).
+
+O gateway atual está registrado no TTN como `gateway-unicamp`, com:
+
+* **Gateway ID:** `gateway-unicamp`
+* **Gateway EUI:** `AC1F09FFFE0FBBDF`
+* **Frequency Plan:** Australia 915-928 MHz, FSB 2 (used by TTN) (compatível com operação AU915 no Brasil)
+* **Protocolo atual de link:** UDP (Packet Forwarder)
+* **Status:** ativo, recebendo ~264k uplinks
+
+Essa configuração permite uplink (dispositivo → gateway → TTN), que já está funcionando. A parte de downlink/ACK ainda está em fase de trabalho.
+
+---
+
+## Objetivos
+
+* Colocar o gateway na rede TTN para receber mensagens LoRaWAN dos dispositivos sensores.
+* Encaminhar esses dados ao TTN em tempo real.
+* Tornar o gateway visível/publicamente registrável na conta TTN do time (status público habilitado).
+* Permitir que múltiplos dispositivos (hoje 4) publiquem telemetria através desse mesmo gateway.
+
+> **Observação importante:**
+>
+> No momento, o gateway opera principalmente em uplink.
+> Ou seja, os dispositivos enviam dados e o gateway entrega esses dados ao TTN com sucesso.
+>
+> A confirmação/ACK de recebimento de pacote (downlink) ainda não é enviada de volta aos dispositivos.
+> Isso está sendo trabalhado (ver seção “Trabalhos em andamento” no final), mas não bloqueia a coleta de dados.
+
+---
+
+## Conexão Física e Rede
+
+* Ligar o gateway RAK7289V2 na alimentação externa.
+* Conectar o gateway via cabo Ethernet à rede cabeada da UNICAMP.
+* A rede da universidade bloqueia portas por padrão, então foi necessário liberar a porta usada pelo forwarder LoRaWAN (UDP).
+* Esse passo deve ser repetido se o gateway mudar de rede ou VLAN.
+* Confirmar que o gateway obteve IP (DHCP).
+* Esse IP é usado para acessar a interface web local do gateway (WisGateOS).
+
+---
+
+## Acesso ao Painel WisGateOS (Gateway RAK)
+
+O WisGateOS é o sistema operacional do gateway RAK.
+
+**Passos:**
+1.  No navegador, acessar o endereço local do gateway
+2.  Fazer login com as credenciais de administrador do gateway.
+    * senha: `********`
+
+**Após login você vê:**
+* Status da interface LoRa
+* Modo de operação (normalmente “Packet Forwarder”)
+* Versão do firmware / versão WisGateOS
+* Temperatura interna do gateway
+
+---
+
+## Registro do Gateway no TTN
+
+Esse passo precisa ser feito uma única vez por gateway.
+
+1.  **Acessar o TTN Console:**
+    * `https://console.cloud.thethings.network`
+    * Selecionar o cluster `nam1` (América do Norte / Américas).
+2.  **Navegar** até `Gateways` → `+ Register gateway`.
+3.  **Preencher:**
+    * **Gateway ID:**
+    * **Gateway EUI:** (vem gravado no hardware; é único)
+    * **Frequency plan:** `Australia 915-928 MHz, FSB 2 (used by TTN)` (mesma banda que será configurada no WisGateOS)
+    * **Public status:** Enabled (permite que outros vejam que o gateway está ativo / cobertura)
+    * **Packet Broker forwarding:** Enabled (permite rotear tráfego LoRaWAN vindo de devices, inclusive de outras redes TTN compatíveis)
+    * **Require authenticated connection:** Disabled (no modo atual UDP, a autenticação é “solta”, baseada no EUI. Para Basics Station, isso muda e passa a usar API Key)
+4.  **Salvar.**
+
+Depois de registrado, o TTN passa a mostrar o painel `gateway-unicamp` com:
+
+* “Last activity: just now”
+* Contadores de uplink/downlink
+* Métricas: RSSI médio, SNR, temperatura interna do gateway
+* Histórico de tráfego em `Live data`
+
+---
+
+## Configuração LoRaWAN no WisGateOS (modo atual UDP)
+
+Agora conectamos o gateway físico ao TTN.
+
+Dentro do painel WisGateOS:
+1.  Abrir `LoRa / LoRa Network Settings` (ou “LoRa Packet Forwarder”).
+2.  Selecionar modo `Packet Forwarder / Semtech UDP`.
+3.  Configurar os campos de rede LoRaWAN:
+    * **Gateway EUI / Station EUI:**
+    * **Server address:** apontar para o cluster correto do TTN.
+        * Para TTN Community Edition cluster NAM1, o endereço é o servidor LoRaWAN do TTN.
+        * (Obs.: dependendo da UI RAK, esse campo pode aparecer como “Server address/Port”)
+    * **Server port:**
+    * **Frequency plan / Channel plan:** selecionar (mesmo plano que você registrou no TTN)
+4.  **Salvar e aplicar.**
+
+**Após salvar:**
+
+* O gateway começa a mandar uplinks para o TTN.
+* No `TTN Console` → `Gateways` → `Live Data`, começam a aparecer linhas tipo:
+    * `Receive uplink message`
+    * RSSI: -104, -106, etc.
+    * SNR
+    * Data rate (ex.: `SF8BW125`, `SF10BW125`)
+    * Contador `FCnt` do dispositivo remoto
+* Também aparecem pacotes de status do próprio gateway:
+    * `Receive gateway status`
+    * Métricas internas (temperatura interna ~31.8°C, uptime, `ackr0`, `txin0`, `txok0`...)
+
+---
+
+## Adição e Associação de Dispositivos no TTN
+
+Para que os dispositivos (nós LoRaWAN) utilizem este gateway, cada nó precisa estar devidamente registrado no The Things Network (TTN) dentro da mesma aplicação.
+
+### Passo a Passo
+
+1.  **Acessar o TTN Console**
+    * Ir para `End devices` → `+ Add end device`.
+2.  **Cadastrar cada dispositivo individualmente**
+    * Para cada nó:
+        * **Device ID:** nome interno do dispositivo (por exemplo, `bitdog-01`, `bitdog-02`, etc.).
+        * **DevEUI:** identificador único de hardware do dispositivo (gravado no módulo LoRa).
+        * **JoinEUI / AppEUI:** identificador da aplicação LoRaWAN (exemplo: `FB00000000000077`).
+        * **AppKey:** chave secreta usada no processo de join OTAA (Over-The-Air Activation).
+3.  **Selecionar a mesma aplicação TTN** onde já estão registrados os outros dispositivos do projeto (por exemplo, a aplicação que contém `bitdog-01`).
+4.  **Verificação da associação**
+    * Após o registro, quando o dispositivo realiza o join e transmite um pacote LoRaWAN, o TTN exibirá em `Live Data`:
+        * JoinEUI
+        * DevEUI
+        * FCnt (contador de pacotes)
+        * FPort
+        * Data rate (ex.: `SF8BW125`)
+        * RSSI e SNR (níveis de sinal recebidos através do `gateway-unicamp`)
+
+### Observações Importantes
+
+* Cada dispositivo LoRaWAN autentica-se na rede exclusivamente com suas chaves OTAA (`DevEUI`, `JoinEUI`, `AppKey`).
+* As API Keys geradas no TTN não são utilizadas nos dispositivos — elas servem apenas para autorizar integrações externas (como webhooks ou gateways) dentro da plataforma TTN.
+* Portanto, as chaves de OTAA devem estar no firmware do dispositivo, enquanto as API Keys do TTN permanecem no console e são utilizadas pelo lado do servidor.
+
+---
+
+## Buffer de Downlink e Limitação Atual
+
+No painel do gateway em TTN existe a opção:
+> Enable server-side buffer of downlink messages
+> (e ajuste de “gateway delay”, ex.: 530 ms)
+
+**O que isso faz:**
+* O TTN armazena mensagens de downlink (ex.: ACK de confirmação ou comandos para o dispositivo).
+* Isso é necessário para redes LoRaWAN bidirecionais porque o dispositivo só abre janelas curtas de recepção logo após transmitir.
+
+**Situação atual:**
+* O `gateway-unicamp` ainda está em modo UDP Packet Forwarder, que é essencialmente envio de uplinks.
+* Mesmo que o buffer de downlink seja habilitado no TTN, o gateway no modo UDP não mantém um canal seguro e persistente para receber esses downlinks e transmiti-los on-air.
+
+**Resultado:**
+* Hoje os dispositivos não recebem ACK/confirmations. Eles apenas transmitem.
+
+**Impacto:**
+* O dispositivo pode reenviar periodicamente o mesmo pacote porque nunca recebe confirmação de entrega.
+* Isso aumenta tráfego de rádio e precisa ser observado em relação ao duty cycle.
+* Registrar isso no documento é importante porque explica por que ainda não há confirmação de entrega no campo.
+
+---
+
+## Trabalhos em Andamento: Migração para Comunicação Bidirecional (Basics Station)
+
+Está em andamento a migração do gateway do modo `UDP Packet Forwarder` para o modo `LoRa Basics Station`.
+
+**Por que isso é necessário:**
+* **UDP Packet Forwarder** → só uplink. Sem sessão segura. Sem downlink confiável.
+* **LoRa Basics Station** → conexão segura via WebSocket (WSS) com o TTN.
+    * Isso permite enviar downlink/ACK para o dispositivo, respeitando automaticamente as janelas RX1/RX2 e o duty cycle.
+
+**Passo a passo planejado para a migração:**
+1.  Acessar o WisGateOS do gateway.
+2.  Ir em `LoRa` → `LoRa Network Settings` e trocar o modo de `Packet Forwarder` para `Basics Station`.
+3.  Voltar no WisGateOS e configurar:
+    * **LNS Server URL:**
+    * **Station EUI:**
+    * **Frequency Plan:** `AU915 FSB2`
+    * **API Key:** colar a chave criada no TTN
+4.  Salvar.
+5.  Reiniciar somente o módulo LoRa (não precisa resetar todo o gateway).
+6.  Verificar no `TTN Console` → `Gateway` → `Live Data` que o protocolo agora aparece como `Basics Station` e que surgem eventos do tipo `Transmit downlink message`.
+
+**Quando essa migração estiver concluída:**
+* Vamos poder mandar downlink/ACK.
+* Vamos poder controlar retransmissão dos dispositivos.
+* Vamos ter que respeitar duty cycle (o gateway não pode ficar transmitindo ACK o tempo todo, porque LoRaWAN tem limites legais de ocupação do canal).
+
+---
+
+## Resumo Operacional
+
+* O gateway físico RAK7289V2 está registrado no TTN como `gateway-unicamp`.
+* Ele está ligado à rede da UNICAMP via Ethernet e autorizado em portas UDP para falar com o TTN.
+* O plano de frequência configurado é `AU915 FSB2`.
+* O gateway já está recebendo tráfego LoRaWAN (“Receive uplink message”) de vários dispositivos do projeto (atualmente 4).
+* Cada dispositivo está registrado no TTN com `DevEUI`, `JoinEUI/AppEUI`, `AppKey` e transmite dados OTAA.
+* O gateway, neste momento, não transmite downlink/ACK para os dispositivos.
+* Há trabalho em andamento para migrar de `UDP Packet Forwarder` para `LoRa Basics Station`, o que habilitará comunicação bidirecional (uplink + downlink) e possibilitará confirmação de entrega, respeitando duty cycle.
